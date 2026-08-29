@@ -60,19 +60,26 @@ const parseDurationSeconds = (duration: string | undefined): number => {
   return Number(duration.replace('s', ''));
 };
 
-const locationToWaypoint = (location: Location): { location: { latLng: { latitude: number; longitude: number } } } => {
-  if (!location.point) {
-    throw new Error('GoogleRouteProvider requires coordinates for origin and destination.');
+type Waypoint = { location: { latLng: { latitude: number; longitude: number } } } | { address: string };
+
+const locationToWaypoint = (location: Location): Waypoint => {
+  if (location.point) {
+    return {
+      location: {
+        latLng: {
+          latitude: location.point.latitude,
+          longitude: location.point.longitude,
+        },
+      },
+    };
   }
 
-  return {
-    location: {
-      latLng: {
-        latitude: location.point.latitude,
-        longitude: location.point.longitude,
-      },
-    },
-  };
+  const address = location.label.trim();
+  if (!address) {
+    throw new Error('GoogleRouteProvider requires either coordinates or an address for origin and destination.');
+  }
+
+  return { address };
 };
 
 export class GoogleRouteProvider implements RouteProvider {

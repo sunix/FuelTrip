@@ -1,14 +1,23 @@
+import { OpenDataFuelStationProvider } from '../api/fuel-prices';
+import { GoogleRouteProvider } from '../api/google-routes';
 import { appConfig } from '../config/env';
 import { FUEL_LABELS, type FuelType } from '../domain/fuel';
 import { optimizeFuelStops, type OptimizationStrategy } from '../domain/optimizer';
-import type { Location } from '../domain/route';
-import { parisLilleRoute, mockStations } from './mock-data';
+import type { Location, Route } from '../domain/route';
+import type { Station } from '../domain/station';
+import { RouteService } from '../services/route-service';
+import { StationService } from '../services/station-service';
 
 interface SearchState {
   origin: Location;
   destination: Location;
   fuelType: FuelType;
   strategy: OptimizationStrategy;
+}
+
+interface SearchResult {
+  route: Route;
+  stations: Station[];
 }
 
 const STRATEGY_LABELS: Record<OptimizationStrategy, string> = {
@@ -39,24 +48,42 @@ const createStrategyButton = (strategy: OptimizationStrategy, activeStrategy: Op
   </button>
 `;
 
+// A location typed or edited by hand loses any coordinates a previous
+// geolocation click may have attached to it; unmodified input keeps them.
+const updateLocationFromInput = (location: Location, inputValue: string): Location => {
+  const label = inputValue.trim();
+  if (!label || label === location.label) {
+    return location;
+  }
+
+  return { label };
+};
+
 export const initializeApp = (rootElement: HTMLElement): void => {
+  const routeService = new RouteService(new GoogleRouteProvider(appConfig.googleMapsApiKey));
+  const stationService = new StationService(new OpenDataFuelStationProvider(appConfig.fuelApiBaseUrl));
+
   const state: SearchState = {
-    origin: { label: 'Paris' },
-    destination: { label: 'Lille' },
+    origin: { label: '' },
+    destination: { label: '' },
     fuelType: 'E10',
     strategy: 'BEST_COMPROMISE',
   };
 
+  let lastResult: SearchResult | null = null;
+
   const render = (status?: string, error = false): void => {
-    const recommendations = optimizeFuelStops(parisLilleRoute, mockStations, {
-      fuelType: state.fuelType,
-      strategy: state.strategy,
-      maxDistanceFromRouteMeters: appConfig.maxDistanceFromRouteMeters,
-      limit: 3,
-    });
+    const recommendations = lastResult
+      ? optimizeFuelStops(lastResult.route, lastResult.stations, {
+          fuelType: state.fuelType,
+          strategy: state.strategy,
+          maxDistanceFromRouteMeters: appConfig.maxDistanceFromRouteMeters,
+          limit: 3,
+        })
+      : [];
 
     const noPriceMessage =
-      recommendations.length === 0
+      lastResult && recommendations.length === 0
         ? '<p class="status warning">Prix indisponible pour ce carburant sur les stations candidates.</p>'
         : '';
 
@@ -81,19 +108,25 @@ export const initializeApp = (rootElement: HTMLElement): void => {
       )
       .join('');
 
+    const routeSummary = lastResult
+      ? `<p>${Math.round(lastResult.route.distanceMeters / 1000)} km · ${Math.round(
+          lastResult.route.durationSeconds / 3600,
+        )}h${String(Math.round((lastResult.route.durationSeconds % 3600) / 60)).padStart(2, '0')}</p>`
+      : '<p class="hint">Renseignez un départ et une destination puis lancez une recherche.</p>';
+
     rootElement.innerHTML = `
       <main class="app-shell">
         <h1>Fuel Stop</h1>
         <form id="search-form" class="panel">
           <label>
             Départ
-            <input type="text" id="origin" value="${state.origin.label}" placeholder="Ma position" required />
+            <input type="text" id="origin" value="${state.origin.label}" placeholder="Ma position, ou une adresse" required />
           </label>
           <button type="button" id="geolocate" class="secondary">Ma position</button>
 
           <label>
             Destination
-            <input type="text" id="destination" value="${state.destination.label}" required />
+            <input type="text" id="destination" value="${state.destination.label}" placeholder="Ville ou adresse d'arrivée" required />
           </label>
 
           <label>
@@ -109,15 +142,12 @@ export const initializeApp = (rootElement: HTMLElement): void => {
           </label>
 
           <button type="submit" class="primary">Rechercher</button>
-          <p class="hint">Mode MVP: résultats calculés sur une fixture Paris → Lille.</p>
         </form>
 
         <section class="panel">
           <h2>Itinéraire</h2>
-          <p>${state.origin.label} → ${state.destination.label}</p>
-          <p>${Math.round(parisLilleRoute.distanceMeters / 1000)} km · ${Math.round(
-            parisLilleRoute.durationSeconds / 3600,
-          )}h${String(Math.round((parisLilleRoute.durationSeconds % 3600) / 60)).padStart(2, '0')}</p>
+          <p>${state.origin.label || '—'} → ${state.destination.label || '—'}</p>
+          ${routeSummary}
         </section>
 
         <section class="panel">
@@ -130,8 +160,10 @@ export const initializeApp = (rootElement: HTMLElement): void => {
           ${status ? `<p class="status ${error ? 'error' : ''}">${status}</p>` : ''}
           ${noPriceMessage}
           ${
-            recommendationCards ||
-            '<p class="status warning">Aucune station trouvée près de l’itinéraire.</p>'
+            lastResult
+              ? recommendationCards ||
+                '<p class="status warning">Aucune station trouvée près de l’itinéraire.</p>'
+              : ''
           }
         </section>
       </main>
@@ -146,12 +178,11 @@ export const initializeApp = (rootElement: HTMLElement): void => {
       const destinationInput = rootElement.querySelector<HTMLInputElement>('#destination');
       const fuelInput = rootElement.querySelector<HTMLSelectElement>('#fuel');
 
-      state.origin.label = originInput?.value.trim() || state.origin.label;
-      state.destination.label = destinationInput?.value.trim() || state.destination.label;
+      state.origin = updateLocationFromInput(state.origin, originInput?.value ?? '');
+      state.destination = updateLocationFromInput(state.destination, destinationInput?.value ?? '');
       state.fuelType = (fuelInput?.value as FuelType) || state.fuelType;
 
-      render('Chargement des stations...');
-      window.setTimeout(() => render(), 250);
+      void search();
     });
 
     geolocateButton?.addEventListener('click', () => {
@@ -183,6 +214,21 @@ export const initializeApp = (rootElement: HTMLElement): void => {
         render();
       });
     });
+  };
+
+  const search = async (): Promise<void> => {
+    render('Recherche en cours...');
+
+    try {
+      const route = await routeService.calculateRoute(state.origin, state.destination);
+      const stations = await stationService.getStations(route, state.fuelType);
+      lastResult = { route, stations };
+      render();
+    } catch (searchError) {
+      lastResult = null;
+      const message = searchError instanceof Error ? searchError.message : 'Erreur inconnue.';
+      render(`Erreur API : ${message}`, true);
+    }
   };
 
   render();

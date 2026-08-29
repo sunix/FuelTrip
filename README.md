@@ -76,7 +76,7 @@ Le domaine (`domain/optimizer.ts`) ne dépend pas des APIs externes.
 - bouton “Naviguer vers cette station” (ouverture Google Maps)
 - gestion des états: chargement, erreur API, aucune station trouvée, prix indisponible, géolocalisation refusée
 
-Le flux UI principal utilise une fixture mockée Paris → Lille (étape MVP sans backend).
+Le flux UI principal appelle l'itinéraire Google Routes puis l'open data carburants en direct (voir `.env.example` pour la configuration requise).
 
 ## Tests
 
