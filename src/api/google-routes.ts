@@ -11,6 +11,13 @@ interface GoogleRouteResponse {
   }>;
 }
 
+interface GoogleErrorResponse {
+  error?: {
+    message?: string;
+    status?: string;
+  };
+}
+
 const decodeGooglePolyline = (encodedPolyline: string): GeoPoint[] => {
   const points: GeoPoint[] = [];
   let index = 0;
@@ -105,7 +112,9 @@ export class GoogleRouteProvider implements RouteProvider {
     });
 
     if (!response.ok) {
-      throw new Error(`Google Routes error: ${response.status}`);
+      const errorPayload = (await response.json().catch(() => undefined)) as GoogleErrorResponse | undefined;
+      const detail = errorPayload?.error?.message ?? errorPayload?.error?.status;
+      throw new Error(detail ? `Google Routes error: ${detail}` : `Google Routes error: ${response.status}`);
     }
 
     const payload = (await response.json()) as GoogleRouteResponse;
