@@ -30,6 +30,7 @@ Copier `.env.example` vers `.env` :
 
 - `VITE_GOOGLE_MAPS_API_KEY`
 - `VITE_MAX_DISTANCE_FROM_ROUTE_METERS`
+- `VITE_RECOMMENDATION_LIMIT` (défaut: 5)
 - `VITE_FUEL_API_BASE_URL` (optionnel)
 
 ⚠️ La clé Google Maps est utilisée côté navigateur. Elle doit être restreinte par **HTTP referrer** (domaine GitHub Pages / domaine de prod), avec uniquement les APIs nécessaires.

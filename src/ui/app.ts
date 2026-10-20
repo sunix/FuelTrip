@@ -83,7 +83,7 @@ export const initializeApp = (rootElement: HTMLElement): void => {
           fuelType: state.fuelType,
           strategy: state.strategy,
           maxDistanceFromRouteMeters: appConfig.maxDistanceFromRouteMeters,
-          limit: 3,
+          limit: appConfig.recommendationLimit,
         })
       : [];
 
