@@ -1,5 +1,7 @@
 import type { FuelType } from '../domain/fuel';
 import { ALL_FUEL_TYPES } from '../domain/fuel';
+import type { BoundingBox } from '../domain/geometry';
+import { buildRouteBoundingBoxes } from '../domain/geometry';
 import type { GeoPoint, Route } from '../domain/route';
 import type { FuelPrice, Station } from '../domain/station';
 import type { FuelStationProvider } from '../services/station-service';
@@ -12,8 +14,14 @@ interface OpenDataRecord {
 }
 
 interface OpenDataResponse {
+  total_count?: number;
   results?: OpenDataRecord[];
   records?: OpenDataRecord[];
+}
+
+interface OpenDataErrorResponse {
+  message?: string;
+  error_code?: string;
 }
 
 const FUEL_FIELD_CANDIDATES: Record<FuelType, string[]> = {
@@ -41,6 +49,14 @@ const MAX_LONGITUDE_DEGREES = 180;
 // degrees. Reading the scalars as-is placed every station 100000x away from
 // the route, so nothing ever passed the near-route filter.
 const PTV_UNITS_PER_DEGREE = 100_000;
+
+// The API caps a page at 100 records out of ~10000 stations nationwide, so the
+// corridor has to be narrowed server-side rather than paged through blindly.
+const GEO_QUERY_FIELD = 'geom';
+const MAX_RECORDS_PER_PAGE = 100;
+const MAX_PAGES_PER_BOX = 10;
+const ROUTE_BOX_SPAN_METERS = 60_000;
+const QUERY_COORDINATE_PRECISION = 5;
 
 const asRecord = (value: unknown): Record<string, unknown> => {
   if (value && typeof value === 'object') {
@@ -191,45 +207,111 @@ const extractFuelPrices = (record: Record<string, unknown>): FuelPrice[] => {
   });
 };
 
-export class OpenDataFuelStationProvider implements FuelStationProvider {
-  constructor(private readonly baseUrl: string) {}
+const formatCoordinate = (value: number): string => value.toFixed(QUERY_COORDINATE_PRECISION);
 
-  async getStations(_route: Route, _fuelType: FuelType): Promise<Station[]> {
+const buildWhereClause = (box: BoundingBox, fuelType: FuelType): string => {
+  const bbox = [box.minLatitude, box.minLongitude, box.maxLatitude, box.maxLongitude]
+    .map(formatCoordinate)
+    .join(', ');
+
+  // Only stations that actually sell the requested fuel are worth a page slot.
+  return `in_bbox(${GEO_QUERY_FIELD}, ${bbox}) and ${FUEL_FIELD_CANDIDATES[fuelType][0]} is not null`;
+};
+
+const toStation = (rawRecord: OpenDataRecord, index: number): Station | undefined => {
+  const root = asRecord(rawRecord);
+  const fields = asRecord(root.fields);
+  const mergedRecord = { ...root, ...fields };
+
+  const point = readStationPoint(mergedRecord);
+  if (!point) {
+    return undefined;
+  }
+
+  const prices = extractFuelPrices(mergedRecord);
+  if (prices.length === 0) {
+    return undefined;
+  }
+
+  return {
+    // Overlapping boxes return the same station twice, and coordinates keep
+    // the identity stable when the source exposes no id of its own.
+    id: String(root.id ?? root.recordid ?? `${point.latitude},${point.longitude}`),
+    name: buildStationName(mergedRecord, index),
+    latitude: point.latitude,
+    longitude: point.longitude,
+    prices,
+  } satisfies Station;
+};
+
+export class OpenDataFuelStationProvider implements FuelStationProvider {
+  constructor(
+    private readonly baseUrl: string,
+    private readonly searchRadiusMeters: number,
+  ) {}
+
+  async getStations(route: Route, fuelType: FuelType): Promise<Station[]> {
+    const boxes = buildRouteBoundingBoxes(
+      route.points,
+      this.searchRadiusMeters,
+      ROUTE_BOX_SPAN_METERS,
+    );
+
+    if (boxes.length === 0) {
+      return [];
+    }
+
+    const recordsPerBox = await Promise.all(boxes.map((box) => this.fetchBox(box, fuelType)));
+
+    const stationsById = new Map<string, Station>();
+    recordsPerBox.flat().forEach((rawRecord, index) => {
+      const station = toStation(rawRecord, index);
+      if (station && !stationsById.has(station.id)) {
+        stationsById.set(station.id, station);
+      }
+    });
+
+    return [...stationsById.values()];
+  }
+
+  private async fetchBox(box: BoundingBox, fuelType: FuelType): Promise<OpenDataRecord[]> {
+    const records: OpenDataRecord[] = [];
+
+    for (let page = 0; page < MAX_PAGES_PER_BOX; page += 1) {
+      const payload = await this.fetchPage(box, fuelType, page * MAX_RECORDS_PER_PAGE);
+      const pageRecords = payload.results ?? payload.records ?? [];
+      records.push(...pageRecords);
+
+      const isLastPage =
+        pageRecords.length < MAX_RECORDS_PER_PAGE ||
+        (payload.total_count !== undefined && records.length >= payload.total_count);
+
+      if (isLastPage) {
+        break;
+      }
+    }
+
+    return records;
+  }
+
+  private async fetchPage(
+    box: BoundingBox,
+    fuelType: FuelType,
+    offset: number,
+  ): Promise<OpenDataResponse> {
     const query = new URL(this.baseUrl);
-    query.searchParams.set('limit', '100');
+    query.searchParams.set('limit', String(MAX_RECORDS_PER_PAGE));
+    query.searchParams.set('offset', String(offset));
+    query.searchParams.set('where', buildWhereClause(box, fuelType));
 
     const response = await fetch(query.toString());
     if (!response.ok) {
-      throw new Error(`Fuel price API error: ${response.status}`);
+      const errorPayload = (await response.json().catch(() => undefined)) as
+        OpenDataErrorResponse | undefined;
+
+      throw new Error(`Fuel price API error: ${errorPayload?.message ?? String(response.status)}`);
     }
 
-    const payload = (await response.json()) as OpenDataResponse;
-    const records = payload.results ?? payload.records ?? [];
-
-    return records
-      .map((rawRecord, index) => {
-        const root = asRecord(rawRecord);
-        const fields = asRecord(root.fields);
-        const mergedRecord = { ...root, ...fields };
-
-        const point = readStationPoint(mergedRecord);
-        if (!point) {
-          return undefined;
-        }
-
-        const prices = extractFuelPrices(mergedRecord);
-        if (prices.length === 0) {
-          return undefined;
-        }
-
-        return {
-          id: String(root.id ?? root.recordid ?? index),
-          name: buildStationName(mergedRecord, index),
-          latitude: point.latitude,
-          longitude: point.longitude,
-          prices,
-        } satisfies Station;
-      })
-      .filter((station): station is Station => Boolean(station));
+    return (await response.json()) as OpenDataResponse;
   }
 }
