@@ -27,15 +27,54 @@ describe('optimizeFuelStops', () => {
       fuelType: 'E10',
       strategy: 'BEST_COMPROMISE',
       maxDistanceFromRouteMeters: 15_000,
-      limit: 3,
+      limit: 10,
     });
 
-    const closePriceyIndex = compromise.findIndex((station) => station.stationId === 'close-pricey');
-    const cheapFarIndex = compromise.findIndex((station) => station.stationId === 'slightly-far-cheap');
+    const closePriceyIndex = compromise.findIndex(
+      (station) => station.stationId === 'close-pricey',
+    );
+    const cheapFarIndex = compromise.findIndex(
+      (station) => station.stationId === 'slightly-far-cheap',
+    );
 
     expect(closePriceyIndex).toBeGreaterThan(-1);
     expect(cheapFarIndex).toBeGreaterThan(-1);
     expect(closePriceyIndex).toBeLessThan(cheapFarIndex);
+  });
+
+  it('does not collapse the compromise onto the minimal detour', () => {
+    const options = {
+      fuelType: 'E10',
+      maxDistanceFromRouteMeters: 15_000,
+      limit: 1,
+    } as const;
+
+    const compromise = optimizeFuelStops(parisLilleFixtureRoute, fixtureStations, {
+      ...options,
+      strategy: 'BEST_COMPROMISE',
+    })[0];
+    const minimalDetour = optimizeFuelStops(parisLilleFixtureRoute, fixtureStations, {
+      ...options,
+      strategy: 'MINIMAL_DETOUR',
+    })[0];
+
+    // The closest station is also the most expensive one of the fixture, so a
+    // compromise that still picks it is ignoring the price entirely.
+    expect(minimalDetour.stationId).toBe('close-pricey');
+    expect(compromise.stationId).not.toBe('close-pricey');
+  });
+
+  it('weighs price against detour instead of ranking on one of them', () => {
+    const [best] = optimizeFuelStops(parisLilleFixtureRoute, fixtureStations, {
+      fuelType: 'E10',
+      strategy: 'BEST_COMPROMISE',
+      maxDistanceFromRouteMeters: 15_000,
+      limit: 1,
+    });
+
+    // Neither the cheapest (23 km of detour) nor the closest (the dearest
+    // litre): the station that is reasonable on both axes.
+    expect(best.stationId).toBe('balanced');
   });
 
   it('ignores stations without the requested fuel', () => {
@@ -61,7 +100,9 @@ describe('optimizeFuelStops', () => {
   });
 
   it('handles ties deterministically', () => {
-    const tieOnlyStations = fixtureStations.filter((station) => ['tie-a', 'tie-b'].includes(station.id));
+    const tieOnlyStations = fixtureStations.filter((station) =>
+      ['tie-a', 'tie-b'].includes(station.id),
+    );
 
     const recommendations = optimizeFuelStops(parisLilleFixtureRoute, tieOnlyStations, {
       fuelType: 'E10',
