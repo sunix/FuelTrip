@@ -3,7 +3,7 @@ import { GoogleRouteProvider } from '../api/google-routes';
 import { appConfig } from '../config/env';
 import { FUEL_LABELS, type FuelType } from '../domain/fuel';
 import { optimizeFuelStops, type OptimizationStrategy } from '../domain/optimizer';
-import type { Location, Route } from '../domain/route';
+import { parseGeoPoint, type Location, type Route } from '../domain/route';
 import type { Station } from '../domain/station';
 import { RouteService } from '../services/route-service';
 import { StationService } from '../services/station-service';
@@ -53,13 +53,14 @@ const createStrategyButton = (
 
 // A location typed or edited by hand loses any coordinates a previous
 // geolocation click may have attached to it; unmodified input keeps them.
+// Typed coordinates keep their own point so they reach Google as a latLng.
 const updateLocationFromInput = (location: Location, inputValue: string): Location => {
   const label = inputValue.trim();
   if (!label || label === location.label) {
     return location;
   }
 
-  return { label };
+  return { label, point: parseGeoPoint(label) };
 };
 
 export const initializeApp = (rootElement: HTMLElement): void => {
