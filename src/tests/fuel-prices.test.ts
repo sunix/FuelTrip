@@ -78,3 +78,51 @@ describe('OpenDataFuelStationProvider coordinates', () => {
     expect(stations).toEqual([]);
   });
 });
+
+describe('OpenDataFuelStationProvider naming', () => {
+  it('names a station after its street and town', async () => {
+    stubFetch(buildOpenDataResponse([openDataRecordWithGeom]));
+
+    const stations = await new OpenDataFuelStationProvider(BASE_URL).getStations(
+      parisLilleFixtureRoute,
+      'E10',
+    );
+
+    expect(stations[0].name).toBe('Route de Mont de Marsan, Saint-Sever');
+  });
+
+  it('title-cases addresses published in full uppercase', async () => {
+    stubFetch(buildOpenDataResponse([openDataRecordWithoutGeom]));
+
+    const stations = await new OpenDataFuelStationProvider(BASE_URL).getStations(
+      parisLilleFixtureRoute,
+      'E10',
+    );
+
+    expect(stations[0].name).toBe('Route Nationale 7 - Les Boulaises, Chantenay-Saint-Imbert');
+  });
+
+  it('prefers a brand column when the source exposes one', async () => {
+    stubFetch(buildOpenDataResponse([openDataRecordWithFields]));
+
+    const stations = await new OpenDataFuelStationProvider(BASE_URL).getStations(
+      parisLilleFixtureRoute,
+      'E10',
+    );
+
+    expect(stations[0].name).toBe('Total Access, Roye');
+  });
+
+  it('falls back to a generic label when nothing identifies the station', async () => {
+    stubFetch(
+      buildOpenDataResponse([{ id: 'anonymous', geom: { lat: 49.7, lon: 2.85 }, e10_prix: 1.72 }]),
+    );
+
+    const stations = await new OpenDataFuelStationProvider(BASE_URL).getStations(
+      parisLilleFixtureRoute,
+      'E10',
+    );
+
+    expect(stations[0].name).toBe('Station 1');
+  });
+});
