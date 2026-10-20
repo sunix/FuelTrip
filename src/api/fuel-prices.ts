@@ -26,7 +26,9 @@ const FUEL_FIELD_CANDIDATES: Record<FuelType, string[]> = {
 };
 
 const UPDATED_AT_FIELD_CANDIDATES = ['maj', 'updated_at', 'date_maj', 'last_update'];
-const NAME_FIELD_CANDIDATES = ['enseigne', 'nom', 'name'];
+const NAME_FIELD_CANDIDATES = ['enseigne', 'nom', 'name', 'brand'];
+const ADDRESS_FIELD_CANDIDATES = ['adresse', 'address'];
+const CITY_FIELD_CANDIDATES = ['ville', 'city', 'commune'];
 const LAT_FIELD_CANDIDATES = ['latitude', 'lat'];
 const LON_FIELD_CANDIDATES = ['longitude', 'lon', 'lng'];
 const GEO_FIELD_CANDIDATES = ['geom', 'geo_point_2d', 'geopoint', 'coordonnees'];
@@ -143,6 +145,38 @@ const readScalarPoint = (record: Record<string, unknown>): GeoPoint | undefined 
 const readStationPoint = (record: Record<string, unknown>): GeoPoint | undefined =>
   readGeoObjectPoint(record) ?? readScalarPoint(record);
 
+// Addresses often come through in full uppercase ("ROUTE NATIONALE 7 - LES
+// BOULAISES"); title-case those so the recommendation list stays readable.
+const toDisplayCase = (value: string): string =>
+  /\p{Ll}/u.test(value)
+    ? value
+    : value
+        .toLocaleLowerCase('fr-FR')
+        .replace(
+          /(^|[\s'-])(\p{L})/gu,
+          (_match, separator: string, letter: string) =>
+            separator + letter.toLocaleUpperCase('fr-FR'),
+        );
+
+// The feed has no brand column, so a station is named after its street and
+// town instead of the "Station 12" placeholder every record used to get.
+const buildStationName = (record: Record<string, unknown>, index: number): string => {
+  const street =
+    readStringField(record, NAME_FIELD_CANDIDATES) ??
+    readStringField(record, ADDRESS_FIELD_CANDIDATES);
+  const city = readStringField(record, CITY_FIELD_CANDIDATES);
+
+  const parts = [street, city]
+    .filter((part): part is string => Boolean(part?.trim()))
+    .map((part) => toDisplayCase(part.trim()));
+  const uniqueParts = parts.filter(
+    (part, position) =>
+      parts.findIndex((other) => other.toLowerCase() === part.toLowerCase()) === position,
+  );
+
+  return uniqueParts.length > 0 ? uniqueParts.join(', ') : `Station ${index + 1}`;
+};
+
 const extractFuelPrices = (record: Record<string, unknown>): FuelPrice[] => {
   const updatedAt =
     readStringField(record, UPDATED_AT_FIELD_CANDIDATES) ?? new Date().toISOString();
@@ -190,7 +224,7 @@ export class OpenDataFuelStationProvider implements FuelStationProvider {
 
         return {
           id: String(root.id ?? root.recordid ?? index),
-          name: readStringField(mergedRecord, NAME_FIELD_CANDIDATES) ?? `Station ${index + 1}`,
+          name: buildStationName(mergedRecord, index),
           latitude: point.latitude,
           longitude: point.longitude,
           prices,
