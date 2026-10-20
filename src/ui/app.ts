@@ -42,7 +42,10 @@ const formatDistance = (meters: number): string => `${(meters / 1000).toFixed(1)
 
 const formatDuration = (seconds: number): string => `+${Math.round(seconds / 60)} min`;
 
-const createStrategyButton = (strategy: OptimizationStrategy, activeStrategy: OptimizationStrategy): string => `
+const createStrategyButton = (
+  strategy: OptimizationStrategy,
+  activeStrategy: OptimizationStrategy,
+): string => `
   <button class="strategy-button ${strategy === activeStrategy ? 'active' : ''}" data-strategy="${strategy}">
     ${STRATEGY_LABELS[strategy]}
   </button>
@@ -61,7 +64,9 @@ const updateLocationFromInput = (location: Location, inputValue: string): Locati
 
 export const initializeApp = (rootElement: HTMLElement): void => {
   const routeService = new RouteService(new GoogleRouteProvider(appConfig.googleMapsApiKey));
-  const stationService = new StationService(new OpenDataFuelStationProvider(appConfig.fuelApiBaseUrl));
+  const stationService = new StationService(
+    new OpenDataFuelStationProvider(appConfig.fuelApiBaseUrl, appConfig.maxDistanceFromRouteMeters),
+  );
 
   const state: SearchState = {
     origin: { label: '' },

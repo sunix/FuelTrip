@@ -99,4 +99,9 @@ Couvre:
 - Adaptateur Google Routes: `src/api/google-routes.ts`
 - Adaptateur Open Data carburants: `src/api/fuel-prices.ts`
 
+L'adaptateur carburants n'interroge pas toute la France: l'itinéraire est
+découpé en boîtes englobantes (`buildRouteBoundingBoxes`) élargies de
+`VITE_MAX_DISTANCE_FROM_ROUTE_METERS`, et chaque boîte est demandée au flux
+open data avec un filtre `in_bbox` + le carburant choisi, puis paginée.
+
 L'adaptateur carburants est volontairement tolérant au schéma (plusieurs noms de champs testés) afin d'éviter un couplage fort à une seule version de payload.
