@@ -32,7 +32,8 @@ export interface FuelStopRecommendation {
 
 type Candidate = FuelStopRecommendation;
 
-const estimateDetourMeters = (distanceFromRouteMeters: number): number => distanceFromRouteMeters * 2.2;
+const estimateDetourMeters = (distanceFromRouteMeters: number): number =>
+  distanceFromRouteMeters * 2.2;
 
 const normalize = (value: number, min: number, max: number): number => {
   if (min === max) {
@@ -110,10 +111,11 @@ export const optimizeFuelStops = (
     } else if (options.strategy === 'MINIMAL_DETOUR') {
       score = normalizedDetour;
     } else {
-      const epsilon = 1e-6;
+      // A weighted sum, not a product: with a geometric mean the station at
+      // the smallest detour scored a normalized 0 and won whatever its price,
+      // which collapsed this strategy onto MINIMAL_DETOUR.
       score =
-        Math.pow(normalizedPrice + epsilon, compromiseWeights.price) *
-        Math.pow(normalizedDetour + epsilon, compromiseWeights.detour);
+        compromiseWeights.price * normalizedPrice + compromiseWeights.detour * normalizedDetour;
     }
 
     return {
